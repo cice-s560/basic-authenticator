@@ -1,14 +1,25 @@
 var express = require('express');
 var router = express.Router();
+const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
 const UserModel = require("../models/User");
 
-function checkSession(req, res, next) {
-    if (req.session && req.session.user) {
-        next();
+function checkToken(req, res, next) {
+    if (!req.headers.authorization) {
+        return res.status(401).send();
     }
 
-    return res.status(401).send();
+    const token = req.headers.authorization.toString().split("Bearer ")[1];
+
+    jwt.verify(token, process.env.SECRET_JWT, (err, payload) => {
+        if (err) {
+            return res.status(401).send();
+        }
+
+        req.userId = payload.user;
+
+        next();
+    });
 }
 
 router.post('/', async function(req, res, next) {
@@ -17,17 +28,28 @@ router.post('/', async function(req, res, next) {
 
   const user = await UserModel.findOne({username: req.body.username});
 
+  if (!user) {
+    return res.status(400).send("Usuario no existe");
+  }
+
   bcrypt.compare(req.body.password.toString(), user.password, function(err, result) {
         if (err) {
+            res.status(400).send("Password erróneo"); // mala práctica. Mejor no decir porqué en producción
             throw err;
         }
 
-        // Si result es TRUE debería crear una session
-        if (result) {
-            req.session.user = user._id;
+        if (!result) {
+            return res.status(400).send("Password erróneo"); // mala práctica. Mejor no decir porqué en producción
         }
 
-        res.status(200).send(result);
+        // Si result es TRUE debería generar un JWT
+        jwt.sign({user: user._id}, process.env.SECRET_JWT, (err, token) => {
+            if (err) {
+                throw err;
+            }
+
+            res.status(200).json({token});
+        });
     });
 });
 
@@ -53,8 +75,8 @@ router.post('/create', async function(req, res, next) {
   });
 
 
-router.get("/check", checkSession, (req, res) => {
-    return res.render("private-page", {userId: req.session.user});
+router.get("/check", checkToken, (req, res) => {
+    return res.render("private-page", {userId: req.userId});
 });
 
 module.exports = router;
